@@ -109,7 +109,7 @@ public:
         }
 
         subscription_ = this->create_subscription<geometry_msgs::msg::QuaternionStamped>(
-            "/head/orientation", 10,
+            "orientation", 10,
             [this](const geometry_msgs::msg::QuaternionStamped::SharedPtr msg)
             {
                 auto [tilt, pan] = quaternionToTiltPan(msg->quaternion); // .quaternion added

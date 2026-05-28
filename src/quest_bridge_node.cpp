@@ -16,7 +16,7 @@
 //   {"x": 0.0, "y": 0.1, "z": 0.0, "w": 0.99}
 //
 // De node publiceert de quaternion op:
-//   /head/orientation  (geometry_msgs/QuaternionStamped)
+//   orientation  (geometry_msgs/QuaternionStamped)
 // ─────────────────────────────────────────────────────────────────────────────
 
 class QuestBridgeNode : public rclcpp::Node
@@ -25,7 +25,7 @@ public:
     QuestBridgeNode() : Node("quest_bridge_node")
     {
         publisher_ = this->create_publisher<geometry_msgs::msg::QuaternionStamped>(
-            "/head/orientation", 10);
+            "orientation", 10);
 
         server_fd_ = socket(AF_INET, SOCK_STREAM, 0);
 
