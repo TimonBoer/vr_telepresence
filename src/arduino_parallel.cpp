@@ -85,10 +85,10 @@ std::pair<double, double> quaternionToTiltPan(const geometry_msgs::msg::Quaterni
     return {tilt, pan};
 }
 
-class ArduinoServoNode : public rclcpp::Node
+class ArduinoParallel : public rclcpp::Node
 {
 public:
-    ArduinoServoNode() : Node("arduino_servo_node"), io_(), serial_(io_),
+    ArduinoParallel() : Node("arduino_parallel"), io_(), serial_(io_),
                          ropes_({
                              Rope(0, 90 + TIGHTNESS),         // left
                              Rope(M_PI, 95 + TIGHTNESS),      // right
@@ -152,7 +152,7 @@ private:
 int main(int argc, char *argv[])
 {
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<ArduinoServoNode>());
+    rclcpp::spin(std::make_shared<ArduinoParallel>());
     rclcpp::shutdown();
     return 0;
 }

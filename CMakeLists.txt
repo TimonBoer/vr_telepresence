@@ -17,11 +17,17 @@ find_package(Boost REQUIRED COMPONENTS system)
 add_executable(quest_bridge_node src/quest_bridge_node.cpp)
 ament_target_dependencies(quest_bridge_node rclcpp geometry_msgs)
 
-# ── arduino_servo_node ────────────────────────────────────────────────────────
+# ── arduino_serial ────────────────────────────────────────────────────────
 # Zet QuaternionStamped om naar Euler en stuurt bytes naar de Arduino
-add_executable(arduino_servo_node src/arduino_servo_node.cpp)
-ament_target_dependencies(arduino_servo_node rclcpp geometry_msgs)
-target_link_libraries(arduino_servo_node Boost::system)
+add_executable(arduino_serial src/arduino_serial.cpp)
+ament_target_dependencies(arduino_serial rclcpp geometry_msgs)
+target_link_libraries(arduino_serial Boost::system)
+
+# ── arduino_parallel ────────────────────────────────────────────────────────
+# Zet QuaternionStamped om naar lengtes van touwen en stuurt motor commands naar de Arduino
+add_executable(arduino_parallel src/arduino_parallel.cpp)
+ament_target_dependencies(arduino_parallel rclcpp geometry_msgs)
+target_link_libraries(arduino_parallel Boost::system)
 
 # ── emotion_input_node ────────────────────────────────────────────────────────
 # Toetsenbordinput → publiceert emotie string naar Raspberry Pi
@@ -31,7 +37,8 @@ ament_target_dependencies(emotion_input_node rclcpp std_msgs)
 # ── Install ───────────────────────────────────────────────────────────────────
 install(TARGETS
     quest_bridge_node
-    arduino_servo_node
+    arduino_serial
+    arduino_parallel
     emotion_input_node
   DESTINATION lib/${PROJECT_NAME})
 
