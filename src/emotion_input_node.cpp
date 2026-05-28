@@ -9,7 +9,7 @@
 // emotion_input_node
 //
 // Leest toetsenbordinput en publiceert de gekozen emotie op:
-//   expression  (std_msgs/String)
+//   expression_classification  (std_msgs/String)
 //
 // Toetsen:
 //   i → blij
@@ -25,7 +25,7 @@ public:
     EmotionInputNode() : Node("emotion_input_node")
     {
         publisher_ = this->create_publisher<std_msgs::msg::String>(
-            "expression", 10);
+            "expression_classification", 10);
 
         RCLCPP_INFO(this->get_logger(), "Emotie-input node gestart.");
         RCLCPP_INFO(this->get_logger(),
