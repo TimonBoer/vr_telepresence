@@ -123,7 +123,7 @@ public:
     }
 
 private:
-    static constexpr int TIGHTNESS = 10;
+    static constexpr int TIGHTNESS = 5;
 
     rclcpp::Subscription<geometry_msgs::msg::QuaternionStamped>::SharedPtr subscription_;
     boost::asio::io_service io_;
