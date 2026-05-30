@@ -11,6 +11,9 @@ find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(Boost REQUIRED COMPONENTS system)
+find_package(tf2 REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
 
 # ── quest_bridge_node ─────────────────────────────────────────────────────────
 # Ontvangt TCP JSON van de Quest en publiceert QuaternionStamped
@@ -33,7 +36,10 @@ add_executable(arduino_parallel src/arduino_parallel.cpp)
 target_link_libraries(arduino_parallel PUBLIC
     rclcpp::rclcpp
     ${geometry_msgs_TARGETS}
-    Boost::system)
+    tf2::tf2
+    tf2_ros::tf2_ros
+    tf2_geometry_msgs::tf2_geometry_msgs
+    ${Boost_LIBRARIES})
 
 # ── emotion_input_node ────────────────────────────────────────────────────────
 # Toetsenbordinput → publiceert emotie string naar Raspberry Pi

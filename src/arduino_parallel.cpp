@@ -4,6 +4,10 @@
 #include <string>
 #include <algorithm>
 #include <cmath>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2/LinearMath/Vector3.h>
+#include <tf2/utils.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 // ── Neck geometry (millimetres) ──────────────────────────────────────────────
 constexpr double VERTEBRA_RADIUS = 52.0;
@@ -68,21 +72,40 @@ private:
     double motor_angle_;
 };
 
-std::pair<double, double> quaternionToTiltPan(const geometry_msgs::msg::Quaternion &q)
+void printVector3(const tf2::Vector3 v, const rclcpp::Logger &logger)
 {
-    // ROS quaternion is (x, y, z, w)
-    double x = q.x, y = q.y, z = q.z, w = q.w;
+    RCLCPP_INFO(logger, "(%f, %f, %f)", v.x(), v.y(), v.z());
+}
 
-    // Rotate up-vector (0, 0, 1) by quaternion: v' = q * v * q^-1
-    // Unrolled for v = (0, 0, 1) — third column of the rotation matrix
-    double rx = 2.0 * (x * z + w * y);       // was: 2(xz + wy)
-    double ry = 2.0 * (y * z - w * x);       // was: 2(yz − wx)
-    double rz = 1.0 - 2.0 * (x * x + y * y); // was: 1 − 2(x² + y²)
+std::tuple<double, double, double> quaternionToTiltPanYaw(const geometry_msgs::msg::QuaternionStamped::SharedPtr q_msg, const rclcpp::Logger &logger)
+{
+    tf2::Quaternion q;
+    tf2::fromMsg(q_msg->quaternion, q);
 
-    double tilt = std::acos(std::clamp(rz, -1.0, 1.0));
-    double pan = -std::atan2(rx, ry) + M_PI;
+    // get normal vector by applying rotation to vector pointing up (0, 0, 1)
+    tf2::Vector3 v_norm = quatRotate(q, tf2::Vector3(0, 0, 1));
 
-    return {tilt, pan};
+    double tilt = acos(v_norm.z());
+    double pan = -atan2(v_norm.x(), v_norm.y()) + M_PI;
+
+    // get forward vector by applying rotation to the vector pointing forward (1, 0, 0)
+    tf2::Vector3 v_forward = quatRotate(q, tf2::Vector3(1, 0, 0));
+    
+    // get quaternion of only the tilt and pan rotation, having 0 yaw rotation
+    tf2::Vector3 up(0, 0, 1);
+    tf2::Quaternion tilt_pan_rot = tf2::shortestArcQuatNormalize2(up, v_norm); 
+
+    // rotating vector (1, 0, 0) results in the vector with 0 yaw
+    tf2::Vector3 expected_forward = quatRotate(tilt_pan_rot, tf2::Vector3(1, 0, 0));
+
+    // calculate angle between expected forward and actual forward vector.
+    double yaw = std::acos(std::clamp(v_forward.dot(expected_forward), -1.0, 1.0));
+
+    // determine the sign of the yaw angle by checking the direction of the cross product
+    tf2::Vector3 cross = expected_forward.cross(v_forward);
+    if (cross.dot(v_norm) < 0) yaw = -yaw;
+
+    return {tilt, pan, yaw};
 }
 
 class ArduinoParallel : public rclcpp::Node
@@ -112,8 +135,8 @@ public:
             "orientation", 10,
             [this](const geometry_msgs::msg::QuaternionStamped::SharedPtr msg)
             {
-                auto [tilt, pan] = quaternionToTiltPan(msg->quaternion); // .quaternion added
-                RCLCPP_INFO(this->get_logger(), "tilt: %.4f  pan: %.4f", tilt, pan);
+                auto [tilt, pan, yaw] = quaternionToTiltPanYaw(msg, this->get_logger());
+                RCLCPP_INFO(this->get_logger(), "tilt: %.4f  pan: %.4f, yaw: %.4f", tilt, pan, yaw);
 
                 for (auto &rope : ropes_)
                     rope.update(tilt, pan);
