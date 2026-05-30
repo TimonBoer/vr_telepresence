@@ -56,12 +56,6 @@ install(TARGETS
     emotion_input_node
   DESTINATION lib/${PROJECT_NAME})
 
-install(PROGRAMS
-  src/movella_dot_talker.py
-  src/imu_talker_gui.py
-  DESTINATION lib/${PROJECT_NAME}
-)
-
 install(DIRECTORY launch
   DESTINATION share/${PROJECT_NAME})
 
