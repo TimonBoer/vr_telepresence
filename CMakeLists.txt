@@ -15,24 +15,32 @@ find_package(Boost REQUIRED COMPONENTS system)
 # ── quest_bridge_node ─────────────────────────────────────────────────────────
 # Ontvangt TCP JSON van de Quest en publiceert QuaternionStamped
 add_executable(quest_bridge_node src/quest_bridge_node.cpp)
-ament_target_dependencies(quest_bridge_node rclcpp geometry_msgs)
+target_link_libraries(quest_bridge_node PUBLIC
+    rclcpp::rclcpp
+    ${geometry_msgs_TARGETS})
 
 # ── arduino_serial ────────────────────────────────────────────────────────
 # Zet QuaternionStamped om naar Euler en stuurt bytes naar de Arduino
 add_executable(arduino_serial src/arduino_serial.cpp)
-ament_target_dependencies(arduino_serial rclcpp geometry_msgs)
-target_link_libraries(arduino_serial Boost::system)
+target_link_libraries(arduino_serial PUBLIC
+    rclcpp::rclcpp
+    ${geometry_msgs_TARGETS}
+    Boost::system)
 
 # ── arduino_parallel ────────────────────────────────────────────────────────
 # Zet QuaternionStamped om naar lengtes van touwen en stuurt motor commands naar de Arduino
 add_executable(arduino_parallel src/arduino_parallel.cpp)
-ament_target_dependencies(arduino_parallel rclcpp geometry_msgs)
-target_link_libraries(arduino_parallel Boost::system)
+target_link_libraries(arduino_parallel PUBLIC
+    rclcpp::rclcpp
+    ${geometry_msgs_TARGETS}
+    Boost::system)
 
 # ── emotion_input_node ────────────────────────────────────────────────────────
 # Toetsenbordinput → publiceert emotie string naar Raspberry Pi
 add_executable(emotion_input_node src/emotion_input_node.cpp)
-ament_target_dependencies(emotion_input_node rclcpp std_msgs)
+target_link_libraries(emotion_input_node PUBLIC
+    rclcpp::rclcpp
+    ${std_msgs_TARGETS})
 
 # ── Install ───────────────────────────────────────────────────────────────────
 install(TARGETS
@@ -41,6 +49,12 @@ install(TARGETS
     arduino_parallel
     emotion_input_node
   DESTINATION lib/${PROJECT_NAME})
+
+install(PROGRAMS
+  src/movella_dot_talker.py
+  src/imu_talker_gui.py
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 install(DIRECTORY launch
   DESTINATION share/${PROJECT_NAME})
