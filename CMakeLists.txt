@@ -28,6 +28,9 @@ add_executable(arduino_serial src/arduino_serial.cpp)
 target_link_libraries(arduino_serial PUBLIC
     rclcpp::rclcpp
     ${geometry_msgs_TARGETS}
+    tf2::tf2
+    tf2_ros::tf2_ros
+    tf2_geometry_msgs::tf2_geometry_msgs
     Boost::system)
 
 # ── arduino_parallel ────────────────────────────────────────────────────────
