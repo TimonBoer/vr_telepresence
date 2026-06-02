@@ -136,7 +136,8 @@ public:
             [this](const geometry_msgs::msg::QuaternionStamped::SharedPtr msg)
             {
                 auto [tilt, pan, yaw] = quaternionToTiltPanYaw(msg, this->get_logger());
-                RCLCPP_INFO(this->get_logger(), "tilt: %.4f  pan: %.4f, yaw: %.4f", tilt, pan, yaw);
+                //RCLCPP_INFO(this->get_logger(), "tilt: %.4f  pan: %.4f, yaw: %.4f", tilt, pan, yaw);
+                RCLCPP_INFO(this->get_logger(), "Quaternion data (xyzw): (%.4f, %.4f, %.4f, %.4f)", msg->quaternion.x, msg->quaternion.y, msg->quaternion.z, msg->quaternion.w);
 
                 for (auto &rope : ropes_)
                     rope.update(tilt, pan);
