@@ -114,9 +114,9 @@ public:
     ArduinoParallel() : Node("arduino_parallel"), io_(), serial_(io_),
                          ropes_({
                              Rope(0, 90 + TIGHTNESS),         // left
-                             Rope(M_PI, 95 + TIGHTNESS),      // right
+                             Rope(M_PI, 100 + TIGHTNESS),      // right
                              Rope(M_PI / 2, 95 + TIGHTNESS),  // front
-                             Rope(-M_PI / 2, 90 + TIGHTNESS), // back
+                             Rope(-M_PI / 2, 100 + TIGHTNESS), // back
                          })
     {
         try
@@ -134,9 +134,17 @@ public:
         subscription_ = this->create_subscription<geometry_msgs::msg::QuaternionStamped>(
             "orientation", 10,
             [this](const geometry_msgs::msg::QuaternionStamped::SharedPtr msg)
-            {
+            {   
+                // y z
+                // x y
+                // z x
+                auto buff = msg->quaternion.z;
+                msg->quaternion.z = msg->quaternion.y;
+                msg->quaternion.y = msg->quaternion.x;
+                msg->quaternion.x = buff;
+
                 auto [tilt, pan, yaw] = quaternionToTiltPanYaw(msg, this->get_logger());
-                //RCLCPP_INFO(this->get_logger(), "tilt: %.4f  pan: %.4f, yaw: %.4f", tilt, pan, yaw);
+                RCLCPP_INFO(this->get_logger(), "tilt: %.4f  pan: %.4f, yaw: %.4f", tilt, pan, yaw);
                 RCLCPP_INFO(this->get_logger(), "Quaternion data (xyzw): (%.4f, %.4f, %.4f, %.4f)", msg->quaternion.x, msg->quaternion.y, msg->quaternion.z, msg->quaternion.w);
 
                 for (auto &rope : ropes_)
@@ -147,7 +155,7 @@ public:
     }
 
 private:
-    static constexpr int TIGHTNESS = 5;
+    static constexpr int TIGHTNESS = 10;
 
     rclcpp::Subscription<geometry_msgs::msg::QuaternionStamped>::SharedPtr subscription_;
     boost::asio::io_service io_;
