@@ -18,13 +18,21 @@ constexpr int N_VERTEBRAE = 6;
 constexpr double SPINDLE_RADIUS = 20.0;
 constexpr double NEUTRAL_ROPE_LENGTH = VERTEBRA_HEIGHT * 2.0 * N_VERTEBRAE;
 
+static constexpr int TIGHTNESS = 20;
+static constexpr int LEFT_NEUTRAL =     90 + TIGHTNESS;
+static constexpr int RIGHT_NEUTRAL =    90 + TIGHTNESS;
+static constexpr int FRONT_NEUTRAL =    90 + TIGHTNESS;
+static constexpr int BACK_NEUTRAL =     90 + TIGHTNESS;
+
+static constexpr int YAW_NEUTRAL = 90;
+
 class Rope
 {
 public:
-    Rope(double angular_pos, int motor_neutral_angle)
+    Rope(int motor_neutral_angle, double angular_pos, std::string name = "")
         : angular_pos_(angular_pos), motor_neutral_angle_(motor_neutral_angle),
           angle_from_curve_centre_(0.0), dist_from_curve_centre_(0.0),
-          rope_length_(0.0), angle_offset_(0.0), motor_angle_(motor_neutral_angle)
+          rope_length_(0.0), angle_offset_(0.0), motor_angle_(motor_neutral_angle), name_(name)
     {
         update(0.0, 0.0);
     }
@@ -37,6 +45,8 @@ public:
     }
 
     double getMotorAngle() const { return motor_angle_; }
+
+    std::string getName() const { return name_; }
 
 private:
     void updateRopeGeometry(double pan_angle)
@@ -70,6 +80,7 @@ private:
     double rope_length_;
     double angle_offset_;
     double motor_angle_;
+    std::string name_;
 };
 
 void printVector3(const tf2::Vector3 v, const rclcpp::Logger &logger)
@@ -77,47 +88,16 @@ void printVector3(const tf2::Vector3 v, const rclcpp::Logger &logger)
     RCLCPP_INFO(logger, "(%f, %f, %f)", v.x(), v.y(), v.z());
 }
 
-std::tuple<double, double, double> quaternionToTiltPanYaw(const geometry_msgs::msg::QuaternionStamped::SharedPtr q_msg, const rclcpp::Logger &logger)
-{
-    tf2::Quaternion q;
-    tf2::fromMsg(q_msg->quaternion, q);
-
-    // get normal vector by applying rotation to vector pointing up (0, 0, 1)
-    tf2::Vector3 v_norm = quatRotate(q, tf2::Vector3(0, 0, 1));
-
-    double tilt = acos(v_norm.z());
-    double pan = -atan2(v_norm.x(), v_norm.y()) + M_PI;
-
-    // get forward vector by applying rotation to the vector pointing forward (1, 0, 0)
-    tf2::Vector3 v_forward = quatRotate(q, tf2::Vector3(1, 0, 0));
-    
-    // get quaternion of only the tilt and pan rotation, having 0 yaw rotation
-    tf2::Vector3 up(0, 0, 1);
-    tf2::Quaternion tilt_pan_rot = tf2::shortestArcQuatNormalize2(up, v_norm); 
-
-    // rotating vector (1, 0, 0) results in the vector with 0 yaw
-    tf2::Vector3 expected_forward = quatRotate(tilt_pan_rot, tf2::Vector3(1, 0, 0));
-
-    // calculate angle between expected forward and actual forward vector.
-    double yaw = std::acos(std::clamp(v_forward.dot(expected_forward), -1.0, 1.0));
-
-    // determine the sign of the yaw angle by checking the direction of the cross product
-    tf2::Vector3 cross = expected_forward.cross(v_forward);
-    if (cross.dot(v_norm) < 0) yaw = -yaw;
-
-    return {tilt, pan, yaw};
-}
-
 class ArduinoParallel : public rclcpp::Node
 {
 public:
     ArduinoParallel() : Node("arduino_parallel"), io_(), serial_(io_),
-                         ropes_({
-                             Rope(0, 90 + TIGHTNESS),         // left
-                             Rope(M_PI, 100 + TIGHTNESS),      // right
-                             Rope(M_PI / 2, 95 + TIGHTNESS),  // front
-                             Rope(-M_PI / 2, 100 + TIGHTNESS), // back
-                         })
+                        ropes_({
+                            Rope(LEFT_NEUTRAL, 0, "left"),
+                            Rope(RIGHT_NEUTRAL, M_PI, "right"),
+                            Rope(FRONT_NEUTRAL, M_PI / 2, "front"),
+                            Rope(BACK_NEUTRAL, -M_PI / 2, "back"),
+                        })
     {
         try
         {
@@ -134,44 +114,77 @@ public:
         subscription_ = this->create_subscription<geometry_msgs::msg::QuaternionStamped>(
             "orientation", 10,
             [this](const geometry_msgs::msg::QuaternionStamped::SharedPtr msg)
-            {   
-                auto [tilt, pan, yaw] = quaternionToTiltPanYaw(msg, this->get_logger());
+            {
+                auto [tilt, pan, yaw] = quaternionToTiltPanYaw(msg);
                 RCLCPP_INFO(this->get_logger(), "tilt: %.4f  pan: %.4f, yaw: %.4f", tilt, pan, yaw);
                 RCLCPP_INFO(this->get_logger(), "Quaternion data (xyzw): (%.4f, %.4f, %.4f, %.4f)", msg->quaternion.x, msg->quaternion.y, msg->quaternion.z, msg->quaternion.w);
 
                 for (auto &rope : ropes_)
                     rope.update(tilt, pan);
 
-                sendMotorAngles(yaw);
+                sendMotorAngles(yaw, ropes_);
             });
     }
 
 private:
-    static constexpr int TIGHTNESS = 10;
 
     rclcpp::Subscription<geometry_msgs::msg::QuaternionStamped>::SharedPtr subscription_;
     boost::asio::io_service io_;
     boost::asio::serial_port serial_;
     std::vector<Rope> ropes_;
     bool serial_connected_ = false;
-    
-    void sendMotorAngles(double yaw)
+
+    void sendMotorAngles(double yaw, const std::vector<Rope> &ropes)
     {
         std::vector<uint8_t> motor_angles;
-        motor_angles.reserve(ropes_.size() + 2);
+        motor_angles.reserve(ropes.size() + 2);
 
-        for (const auto& rope : ropes_)
+        for (const auto &rope : ropes)
         {
             uint8_t angle = static_cast<uint8_t>(std::clamp(rope.getMotorAngle(), 0.0, 180.0));
             motor_angles.push_back(angle);
-            RCLCPP_INFO(this->get_logger(), "Motor angle: %d", angle);
+            RCLCPP_INFO(this->get_logger(), "%s: %d", rope.getName().c_str(), angle);
         }
 
-        motor_angles.push_back(static_cast<uint8_t>(std::clamp(yaw * 180.0 / M_PI + 90, 0.0, 180.0)));
+        auto yaw_angle = static_cast<uint8_t>(std::clamp(yaw * 180.0 / M_PI + YAW_NEUTRAL, 0.0, 180.0));
+        motor_angles.push_back(yaw_angle);
+        RCLCPP_INFO(this->get_logger(), "Yaw: %d", yaw_angle);
 
         motor_angles.push_back(181);
         if (serial_connected_)
             boost::asio::write(serial_, boost::asio::buffer(motor_angles));
+    }
+
+    std::tuple<double, double, double> quaternionToTiltPanYaw(const geometry_msgs::msg::QuaternionStamped::SharedPtr q_msg)
+    {
+        tf2::Quaternion q;
+        tf2::fromMsg(q_msg->quaternion, q);
+
+        // get normal vector by applying rotation to vector pointing up (0, 0, 1)
+        tf2::Vector3 v_norm = quatRotate(q, tf2::Vector3(0, 0, 1));
+
+        double tilt = acos(std::clamp(v_norm.z(), -1.0, 1.0));
+        double pan = -atan2(v_norm.x(), v_norm.y()) + M_PI;
+
+        // get forward vector by applying rotation to the vector pointing forward (1, 0, 0)
+        tf2::Vector3 v_forward = quatRotate(q, tf2::Vector3(1, 0, 0));
+
+        // get quaternion of only the tilt and pan rotation, having 0 yaw rotation
+        tf2::Vector3 up(0, 0, 1);
+        tf2::Quaternion tilt_pan_rot = tf2::shortestArcQuatNormalize2(up, v_norm);
+
+        // rotating vector (1, 0, 0) results in the vector with 0 yaw
+        tf2::Vector3 expected_forward = quatRotate(tilt_pan_rot, tf2::Vector3(1, 0, 0));
+
+        // calculate angle between expected forward and actual forward vector.
+        double yaw = std::acos(std::clamp(v_forward.dot(expected_forward), -1.0, 1.0));
+
+        // determine the sign of the yaw angle by checking the direction of the cross product
+        tf2::Vector3 cross = expected_forward.cross(v_forward);
+        if (cross.dot(v_norm) < 0)
+            yaw = -yaw;
+
+        return {tilt, pan, yaw};
     }
 };
 
