@@ -163,7 +163,7 @@ private:
         // get normal vector by applying rotation to vector pointing up (0, 0, 1)
         tf2::Vector3 v_norm = quatRotate(q, tf2::Vector3(0, 0, 1));
 
-        double tilt = acos(std::clamp(v_norm.z(), -1.0, 1.0));
+        double tilt = std::clamp(acos(std::clamp(v_norm.z(), -1.0, 1.0)), 0.0, M_PI/2);
         double pan = -atan2(v_norm.x(), v_norm.y()) + M_PI;
 
         // get forward vector by applying rotation to the vector pointing forward (1, 0, 0)
