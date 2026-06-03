@@ -135,14 +135,6 @@ public:
             "orientation", 10,
             [this](const geometry_msgs::msg::QuaternionStamped::SharedPtr msg)
             {   
-                // y z
-                // x y
-                // z x
-                auto buff = msg->quaternion.z;
-                msg->quaternion.z = msg->quaternion.y;
-                msg->quaternion.y = msg->quaternion.x;
-                msg->quaternion.x = buff;
-
                 auto [tilt, pan, yaw] = quaternionToTiltPanYaw(msg, this->get_logger());
                 RCLCPP_INFO(this->get_logger(), "tilt: %.4f  pan: %.4f, yaw: %.4f", tilt, pan, yaw);
                 RCLCPP_INFO(this->get_logger(), "Quaternion data (xyzw): (%.4f, %.4f, %.4f, %.4f)", msg->quaternion.x, msg->quaternion.y, msg->quaternion.z, msg->quaternion.w);
@@ -150,7 +142,7 @@ public:
                 for (auto &rope : ropes_)
                     rope.update(tilt, pan);
 
-                sendMotorAngles();
+                sendMotorAngles(yaw);
             });
     }
 
@@ -163,10 +155,10 @@ private:
     std::vector<Rope> ropes_;
     bool serial_connected_ = false;
     
-    void sendMotorAngles()
+    void sendMotorAngles(double yaw)
     {
         std::vector<uint8_t> motor_angles;
-        motor_angles.reserve(ropes_.size() + 1);
+        motor_angles.reserve(ropes_.size() + 2);
 
         for (const auto& rope : ropes_)
         {
@@ -174,6 +166,8 @@ private:
             motor_angles.push_back(angle);
             RCLCPP_INFO(this->get_logger(), "Motor angle: %d", angle);
         }
+
+        motor_angles.push_back(static_cast<uint8_t>(std::clamp(yaw * 180.0 / M_PI + 90, 0.0, 180.0)));
 
         motor_angles.push_back(181);
         if (serial_connected_)

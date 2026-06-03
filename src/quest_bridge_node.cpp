@@ -107,9 +107,10 @@ private:
         geometry_msgs::msg::QuaternionStamped msg;
         msg.header.stamp    = this->now();
         msg.header.frame_id = "quest_imu";
-        msg.quaternion.x    = qx;
-        msg.quaternion.y    = qy;
-        msg.quaternion.z    = qz;
+        // swapping x/y/z to match ROS coordinate conventions (Quest's forward is ROS's x, etc.)
+        msg.quaternion.x    = qz;
+        msg.quaternion.y    = qx;
+        msg.quaternion.z    = qy;
         msg.quaternion.w    = qw;
 
         publisher_->publish(msg);
