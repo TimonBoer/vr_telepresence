@@ -18,11 +18,11 @@ constexpr int N_VERTEBRAE = 6;
 constexpr double SPINDLE_RADIUS = 20.0;
 constexpr double NEUTRAL_ROPE_LENGTH = VERTEBRA_HEIGHT * 2.0 * N_VERTEBRAE;
 
-static constexpr int TIGHTNESS = 20;
-static constexpr int LEFT_NEUTRAL =     85 + TIGHTNESS;
-static constexpr int RIGHT_NEUTRAL =    90 + TIGHTNESS;
-static constexpr int FRONT_NEUTRAL =    85 + TIGHTNESS;
-static constexpr int BACK_NEUTRAL =     100 + TIGHTNESS;
+static constexpr int TIGHTNESS = 30;
+static constexpr int LEFT_NEUTRAL = 85 + TIGHTNESS;
+static constexpr int RIGHT_NEUTRAL = 90 + TIGHTNESS;
+static constexpr int FRONT_NEUTRAL = 85 + TIGHTNESS;
+static constexpr int BACK_NEUTRAL = 100 + TIGHTNESS;
 
 static constexpr int YAW_NEUTRAL = 90;
 
@@ -127,7 +127,6 @@ public:
     }
 
 private:
-
     rclcpp::Subscription<geometry_msgs::msg::QuaternionStamped>::SharedPtr subscription_;
     boost::asio::io_service io_;
     boost::asio::serial_port serial_;
@@ -155,15 +154,71 @@ private:
             boost::asio::write(serial_, boost::asio::buffer(motor_angles));
     }
 
+    // ── Acceleration limiter state ───────────────────────────────────────────
+    tf2::Vector3 v_norm_prev_ = tf2::Vector3(0, 0, 1); // previous normal vector
+    tf2::Vector3 v_norm_vel_ = tf2::Vector3(0, 0, 0);  // current velocity of normal vector
+    tf2::Quaternion quat_prev_ = tf2::Quaternion(0, 0, 0, 1);                             // previous orientation quaternion
+    rclcpp::Time last_update_time_;
+    bool first_update_ = true;
+
+    static constexpr double MAX_ACCELERATION = 0.5; // units/s², tune this
+
+    tf2::Vector3 limitAcceleration(const tf2::Vector3 &v_norm_target, double dt)
+    {
+        // Desired velocity to reach target in one step
+        tf2::Vector3 desired_vel = (v_norm_target - v_norm_prev_) / dt;
+
+        // Acceleration needed to reach desired velocity
+        tf2::Vector3 accel = (desired_vel - v_norm_vel_) / dt;
+
+        // Clamp acceleration magnitude
+        double accel_mag = accel.length();
+        if (accel_mag > MAX_ACCELERATION)
+        {
+            RCLCPP_WARN(this->get_logger(), "Acceleration limited from %f to %f", accel_mag, MAX_ACCELERATION);
+            accel = accel * (MAX_ACCELERATION / accel_mag);
+        }
+
+        // Integrate
+        v_norm_vel_ = v_norm_vel_ + accel * dt;
+        tf2::Vector3 v_norm_limited = v_norm_prev_ + v_norm_vel_ * dt;
+
+        // Keep on unit sphere
+        v_norm_limited.normalize();
+        v_norm_prev_ = v_norm_limited;
+
+        return v_norm_limited;
+    }
+
     std::tuple<double, double, double> quaternionToTiltPanYaw(const geometry_msgs::msg::QuaternionStamped::SharedPtr q_msg)
     {
-        tf2::Quaternion q;
-        tf2::fromMsg(q_msg->quaternion, q);
+        tf2::Quaternion q_raw;
+        tf2::fromMsg(q_msg->quaternion, q_raw);
+
+        tf2::Quaternion q = tf2::slerp(q_raw, quat_prev_, 0.01); // smooth interpolation to prevent jumps
+        quat_prev_ = q_raw;
 
         // get normal vector by applying rotation to vector pointing up (0, 0, 1)
         tf2::Vector3 v_norm = quatRotate(q, tf2::Vector3(0, 0, 1));
 
-        double tilt = std::clamp(acos(std::clamp(v_norm.z(), -1.0, 1.0)), 0.0, M_PI/2);
+        // // ── Acceleration limiting ────────────────────────────────────────────
+        // rclcpp::Time now = this->get_clock()->now();
+        // tf2::Vector3 v_norm;
+        // if (first_update_)
+        // {
+        //     v_norm = v_norm_raw;
+        //     v_norm_prev_ = v_norm_raw;
+        //     first_update_ = false;
+        // }
+        // else
+        // {
+        //     double dt = (now - last_update_time_).seconds();
+        //     v_norm = limitAcceleration(v_norm_raw, dt);
+        // }
+        // last_update_time_ = now;
+        // // ────────────────────────────────────────────────────────────────────
+
+        double tilt = std::clamp(acos(std::clamp(v_norm.z(), -1.0, 1.0)), 0.0, M_PI / 2);
         double pan = -atan2(v_norm.x(), v_norm.y()) + M_PI;
 
         // get forward vector by applying rotation to the vector pointing forward (1, 0, 0)
