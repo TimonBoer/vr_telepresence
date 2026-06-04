@@ -19,10 +19,10 @@ constexpr double SPINDLE_RADIUS = 20.0;
 constexpr double NEUTRAL_ROPE_LENGTH = VERTEBRA_HEIGHT * 2.0 * N_VERTEBRAE;
 
 static constexpr int TIGHTNESS = 20;
-static constexpr int LEFT_NEUTRAL =     90 + TIGHTNESS;
+static constexpr int LEFT_NEUTRAL =     85 + TIGHTNESS;
 static constexpr int RIGHT_NEUTRAL =    90 + TIGHTNESS;
-static constexpr int FRONT_NEUTRAL =    90 + TIGHTNESS;
-static constexpr int BACK_NEUTRAL =     90 + TIGHTNESS;
+static constexpr int FRONT_NEUTRAL =    85 + TIGHTNESS;
+static constexpr int BACK_NEUTRAL =     100 + TIGHTNESS;
 
 static constexpr int YAW_NEUTRAL = 90;
 
@@ -102,7 +102,7 @@ public:
         try
         {
             serial_.open("/dev/ttyACM0");
-            serial_.set_option(boost::asio::serial_port_base::baud_rate(9600));
+            serial_.set_option(boost::asio::serial_port_base::baud_rate(115200));
             serial_connected_ = true;
         }
         catch (const std::exception &e)
