@@ -163,7 +163,7 @@ private:
         double qy = extract(json, "y");
         double qz = extract(json, "z");
         double qw = extract(json, "w");
-
+        long seq = static_cast<long>(extract(json, "seq"));
         // RCLCPP_WARN(this->get_logger(),"Ontvangen JSON: x=%.4f  y=%.4f  z=%.4f  w=%.4f", qx, qy, qz, qw);
 
         // swapping x/y/z to match ROS coordinate conventions (Quest's forward is ROS's x, etc.)
@@ -172,7 +172,7 @@ private:
 
         geometry_msgs::msg::QuaternionStamped msg;
         msg.header.stamp = this->now();
-        msg.header.frame_id = "quest_imu";
+        msg.header.frame_id = "quest_imu:" + std::to_string(seq);
         msg.quaternion.x = q_cal.x();
         msg.quaternion.y = q_cal.y();
         msg.quaternion.z = q_cal.z();

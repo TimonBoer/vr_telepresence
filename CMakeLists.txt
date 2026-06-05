@@ -59,13 +59,15 @@ target_link_libraries(emotion_input_node PUBLIC
 # Motion-to-motion (echo via UDP 5006 → records op UDP 5007)
 add_executable(latency_collector_node src/latency_collector_node.cpp)
 target_link_libraries(latency_collector_node PUBLIC
-    rclcpp::rclcpp)
+    rclcpp::rclcpp
+    ${std_msgs_TARGETS})
 
 # ── video_latency_collector_node ──────────────────────────────────────────────
 # Videoweg camera/laptop A → Quest (records op UDP 5009)
 add_executable(video_latency_collector_node src/video_latency_collector_node.cpp)
 target_link_libraries(video_latency_collector_node PUBLIC
-    rclcpp::rclcpp)
+    rclcpp::rclcpp
+    ${std_msgs_TARGETS})
 
 # ── Install ───────────────────────────────────────────────────────────────────
 install(TARGETS
