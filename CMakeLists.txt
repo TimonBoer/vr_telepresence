@@ -51,12 +51,26 @@ target_link_libraries(emotion_input_node PUBLIC
     rclcpp::rclcpp
     ${std_msgs_TARGETS})
 
+# ── latency_collector_node ────────────────────────────────────────────────────
+# Motion-to-motion (echo via UDP 5006 → records op UDP 5007)
+add_executable(latency_collector_node src/latency_collector_node.cpp)
+target_link_libraries(latency_collector_node PUBLIC
+    rclcpp::rclcpp)
+
+# ── video_latency_collector_node ──────────────────────────────────────────────
+# Videoweg camera/laptop A → Quest (records op UDP 5009)
+add_executable(video_latency_collector_node src/video_latency_collector_node.cpp)
+target_link_libraries(video_latency_collector_node PUBLIC
+    rclcpp::rclcpp)
+
 # ── Install ───────────────────────────────────────────────────────────────────
 install(TARGETS
     quest_bridge_node
     arduino_serial
     arduino_parallel
     emotion_input_node
+    video_latency_collector_node
+    latency_collector_node
   DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY launch

@@ -61,7 +61,7 @@ private:
                 auto message  = std_msgs::msg::String();
                 message.data  = std::string(1, key);
                 RCLCPP_INFO(this->get_logger(),
-                    "Emotie '%c' gepubliceerd op /robot/expression", key);
+                    "Emotie '%c' gepubliceerd op /expression_classification", key);
                 publisher_->publish(message);
             } else if (key == 'q') {
                 RCLCPP_INFO(this->get_logger(), "Stoppen...");
