@@ -20,7 +20,11 @@ find_package(tf2_geometry_msgs REQUIRED)
 add_executable(quest_bridge_node src/quest_bridge_node.cpp)
 target_link_libraries(quest_bridge_node PUBLIC
     rclcpp::rclcpp
-    ${geometry_msgs_TARGETS})
+    ${geometry_msgs_TARGETS}
+    ${std_msgs_TARGETS}
+    tf2::tf2
+    tf2_ros::tf2_ros
+    tf2_geometry_msgs::tf2_geometry_msgs)
 
 # ── arduino_serial ────────────────────────────────────────────────────────
 # Zet QuaternionStamped om naar Euler en stuurt bytes naar de Arduino
