@@ -9,6 +9,15 @@
 #include <tf2/utils.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
+// ── Latency-echo naar de Quest (UDP) ─────────────────────────────────────────
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+
 // ── Neck geometry (millimetres) ──────────────────────────────────────────────
 constexpr double VERTEBRA_RADIUS = 52.0;
 constexpr double VERTEBRA_HEIGHT = 7.0;
@@ -205,7 +214,7 @@ public:
 
         // Remove the spin component parallel to the normal — it has no effect on
         // the normal direction but would re-emerge as unwanted velocity if tilt increases.
-        //current_vel_normal_ -= current_normal_ * current_normal_.dot(current_vel_normal_);
+        // current_vel_normal_ -= current_normal_ * current_normal_.dot(current_vel_normal_);
 
         // ── Yaw ───────────────────────────────────────────────────────────────
         double yaw_error = setpoint_yaw_ - current_yaw_;
@@ -275,26 +284,62 @@ public:
                                Rope(BACK_NEUTRAL, -M_PI / 2, "back"),
                            })
     {
-        serial_.open("/dev/ttyACM0");
-        serial_.set_option(boost::asio::serial_port_base::baud_rate(115200));
-        serial_connected_ = true;
-        // try
-        // {
-        //     serial_.open("/dev/ttyACM0");
-        //     serial_.set_option(boost::asio::serial_port_base::baud_rate(115200));
-        //     serial_connected_ = true;
-        // }
-        // catch (const std::exception &e)
-        // {
-        //     serial_connected_ = false;
-        //     RCLCPP_WARN(this->get_logger(), "Arduino not connected — logging only");
-        // }
+        try
+        {
+            serial_.open("/dev/ttyACM0");
+            serial_.set_option(boost::asio::serial_port_base::baud_rate(115200));
+            serial_connected_ = true;
+        }
+        catch (const std::exception &e)
+        {
+            serial_connected_ = false;
+            RCLCPP_WARN(this->get_logger(), "Arduino not connected — logging only");
+        }
+
+        // ── Latency-echo opzetten ────────────────────────────────────────────
+        // Stuurt het seq-nummer (uit frame_id) als UDP-pakketje terug naar de
+        // Quest op ECHO_PORT, zodat die de round-trip-latency kan meten.
+        // Quest-IP komt uit de omgevingsvariabele QUEST_IP (export QUEST_IP=...).
+        echo_sock_ = socket(AF_INET, SOCK_DGRAM, 0);
+        const char *quest_ip = std::getenv("QUEST_IP");
+        if (echo_sock_ >= 0 && quest_ip)
+        {
+            std::memset(&echo_addr_, 0, sizeof(echo_addr_));
+            echo_addr_.sin_family = AF_INET;
+            echo_addr_.sin_port = htons(ECHO_PORT);
+            if (inet_pton(AF_INET, quest_ip, &echo_addr_.sin_addr) == 1)
+            {
+                echo_enabled_ = true;
+                RCLCPP_INFO(this->get_logger(),
+                            "Latency-echo aan: seq -> %s:%d (UDP)", quest_ip, ECHO_PORT);
+            }
+            else
+            {
+                RCLCPP_WARN(this->get_logger(), "QUEST_IP ongeldig — echo uit");
+            }
+        }
+        else
+        {
+            RCLCPP_WARN(this->get_logger(),
+                        "QUEST_IP niet gezet — latency-echo uit (export QUEST_IP=<ip bril>)");
+        }
+
+        // ── QoS: keep-last-1 best-effort ─────────────────────────────────────
+        // MOET matchen met de publisher in de bridge. Een reliable subscriber
+        // op een best-effort publisher is INCOMPATIBEL (dan komt er niets door).
+        // Keep-last-1 is bovendien de queue-fix: alleen de NIEUWSTE pose telt.
+        rclcpp::QoS qos(rclcpp::KeepLast(1));
+        qos.best_effort();
 
         // Subscriber just updates the setpoint.
         subscription_ = this->create_subscription<geometry_msgs::msg::QuaternionStamped>(
             "orientation", 10,
             [this](const geometry_msgs::msg::QuaternionStamped::SharedPtr msg)
             {
+                // Echo het seq DIRECT terug, vóór alle servo-berekeningen, zodat
+                // de meting de keten-/netwerklatency weergeeft en niet de rekentijd.
+                echo_seq(msg->header.frame_id);
+
                 RCLCPP_INFO(this->get_logger(), "Quaternion data (xyzw): (%.4f, %.4f, %.4f, %.4f)",
                             msg->quaternion.x, msg->quaternion.y, msg->quaternion.z, msg->quaternion.w);
 
@@ -308,7 +353,43 @@ public:
                                          { controlLoop(); });
     }
 
+    ~ArduinoParallel_v2() override
+    {
+        if (echo_sock_ >= 0)
+            close(echo_sock_);
+    }
+
+
 private:
+    static constexpr int ECHO_PORT = 5006; // moet matchen met HMD_ECHO_PORT in de Quest-app
+
+    // ── Echo-state ───────────────────────────────────────────────────────────
+    int echo_sock_ = -1;
+    bool echo_enabled_ = false;
+    sockaddr_in echo_addr_{};
+
+    // Haalt het seq-nummer uit frame_id ("quest_imu:<seq>") en stuurt het als
+    // 32-bit network-order integer terug naar de Quest. Geen seq -> niets doen.
+    void echo_seq(const std::string &frame_id)
+    {
+        if (!echo_enabled_)
+            return;
+        auto pos = frame_id.find(':');
+        if (pos == std::string::npos)
+            return;
+        try
+        {
+            uint32_t seq = static_cast<uint32_t>(std::stoul(frame_id.substr(pos + 1)));
+            uint32_t seq_net = htonl(seq);
+            sendto(echo_sock_, &seq_net, sizeof(seq_net), 0,
+                   reinterpret_cast<sockaddr *>(&echo_addr_), sizeof(echo_addr_));
+        }
+        catch (...)
+        {
+            // geen geldig seq in frame_id -> overslaan
+        }
+    }
+
     void controlLoop()
     {
         Pose pose = controller_.update();
