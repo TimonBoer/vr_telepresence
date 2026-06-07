@@ -18,6 +18,10 @@
 #include <cstdlib>
 #include <cstring>
 
+// adding latency
+#include <deque>
+#include <chrono>
+
 // ── Neck geometry (millimetres) ──────────────────────────────────────────────
 constexpr double VERTEBRA_RADIUS = 52.0;
 constexpr double VERTEBRA_HEIGHT = 7.0;
@@ -296,6 +300,9 @@ public:
             RCLCPP_WARN(this->get_logger(), "Arduino not connected — logging only");
         }
 
+        this->declare_parameter("latency_ms", 0.0);
+        latency_ms_ = this->get_parameter("latency_ms").as_double();
+
         // ── Latency-echo opzetten ────────────────────────────────────────────
         // Stuurt het seq-nummer (uit frame_id) als UDP-pakketje terug naar de
         // Quest op ECHO_PORT, zodat die de round-trip-latency kan meten.
@@ -344,13 +351,31 @@ public:
                             msg->quaternion.x, msg->quaternion.y, msg->quaternion.z, msg->quaternion.w);
 
                 auto [v_norm, yaw] = quaternionToNormalYaw(msg);
-                controller_.setSetpoint(v_norm, yaw);
+                setpoint_queue_.push_back({std::chrono::steady_clock::now(),
+                                           v_norm,
+                                           yaw});
             });
 
         // Timer drives the control loop and sends motor angles.
         const auto period = std::chrono::duration<double>(1.0 / 240.0);
         timer_ = this->create_wall_timer(period, [this]()
                                          { controlLoop(); });
+
+        param_cb_ = this->add_on_set_parameters_callback(
+            [this](const std::vector<rclcpp::Parameter> &params)
+            {
+                for (const auto &p : params)
+                {
+                    if (p.get_name() == "latency_ms")
+                    {
+                        latency_ms_ = p.as_double();
+                        setpoint_queue_.clear(); // flush stale data on change
+                        RCLCPP_INFO(this->get_logger(),
+                                    "Latency set to %.1f ms", latency_ms_);
+                    }
+                }
+                return rcl_interfaces::msg::SetParametersResult{}.set__successful(true);
+            });
     }
 
     ~ArduinoParallel_v2() override
@@ -358,7 +383,6 @@ public:
         if (echo_sock_ >= 0)
             close(echo_sock_);
     }
-
 
 private:
     static constexpr int ECHO_PORT = 5006; // moet matchen met HMD_ECHO_PORT in de Quest-app
@@ -392,6 +416,17 @@ private:
 
     void controlLoop()
     {
+        auto now = std::chrono::steady_clock::now();
+        auto delay = std::chrono::duration<double, std::milli>(latency_ms_);
+
+        while (!setpoint_queue_.empty() &&
+               (now - setpoint_queue_.front().received_at) >= delay)
+        {
+            auto &sp = setpoint_queue_.front();
+            controller_.setSetpoint(sp.normal, sp.yaw);
+            setpoint_queue_.pop_front();
+        }
+
         Pose pose = controller_.update();
 
         RCLCPP_INFO(this->get_logger(), "tilt: %.4f  pan: %.4f  yaw: %.4f",
@@ -494,6 +529,17 @@ private:
     RobotController controller_;
     std::vector<Rope> ropes_;
     bool serial_connected_ = false;
+
+    struct TimestampedSetpoint
+    {
+        std::chrono::steady_clock::time_point received_at;
+        tf2::Vector3 normal;
+        double yaw;
+    };
+
+    double latency_ms_ = 0.0;
+    rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_cb_;
+    std::deque<TimestampedSetpoint> setpoint_queue_;
 };
 
 int main(int argc, char *argv[])
