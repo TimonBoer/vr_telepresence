@@ -133,10 +133,10 @@ private:
 struct ControllerConfig
 {
     double update_rate_hz = 240.0;
-    double max_accel = 10.0; // rad/s², can be higher — following head motion
+    double max_accel = 15.0; // rad/s², can be higher — following head motion
     double max_decel = 2.0;  // rad/s², lower — prevents overshoot snapping ropes
-    double max_accel_yaw = 100.0;
-    double max_decel_yaw = 10.0;
+    double max_accel_yaw = 10000.0;
+    double max_decel_yaw = 10000.0;
 };
 
 struct Pose
@@ -151,42 +151,10 @@ class RobotController
 public:
     explicit RobotController(const ControllerConfig &cfg) : cfg_(cfg) {}
 
-    void setSetpoint(const Pose &pos, const rclcpp::Time &stamp)
+    void setSetpoint(const tf2::Vector3 &normal, double yaw)
     {
-        if (!setpoint_initialized_)
-        {
-            setpoint_initialized_ = true;
-            last_setpoint_time_ = stamp;
-            setpoint_yaw_ = pos.yaw;
-            setpoint_normal_ = tiltPanToNormal(pos.tilt, pos.pan);
-            return;
-        }
-
-        double dt_setpoint = (stamp - last_setpoint_time_).seconds();
-        if (dt_setpoint > 0.001) // guard against duplicate timestamps
-        {
-            setpoint_yaw_vel_ = (pos.yaw - setpoint_yaw_) / dt_setpoint;
-            setpoint_yaw_ = pos.yaw;
-
-            tf2::Vector3 new_normal = tiltPanToNormal(pos.tilt, pos.pan);
-
-            // Estimate setpoint velocity from how fast the setpoint itself is moving
-            tf2::Vector3 sp_cross = setpoint_normal_.cross(new_normal);
-            if (sp_cross.length() > 1e-9)
-            {
-                double sp_angle = std::atan2(sp_cross.length(), std::clamp(setpoint_normal_.dot(new_normal), -1.0, 1.0));
-                setpoint_vel_normal_ = sp_cross.normalized() * (sp_angle * cfg_.update_rate_hz);
-            }
-            else
-            {
-                setpoint_vel_normal_ = {0.0, 0.0, 0.0};
-            }
-
-            setpoint_vel_normal_ = {0.0, 0.0, 0.0};
-            setpoint_normal_ = new_normal;
-        }
-
-        last_setpoint_time_ = stamp;
+        setpoint_yaw_ = yaw;
+        setpoint_normal_ = normal.normalized();
     }
 
     Pose update()
@@ -195,6 +163,7 @@ public:
 
         // ── Normal vector (tilt/pan) ──────────────────────────────────────────
 
+        // Angle and axis from current normal to setpoint
         tf2::Vector3 cross = current_normal_.cross(setpoint_normal_);
         double sin_angle = cross.length();
         double cos_angle = std::clamp(current_normal_.dot(setpoint_normal_), -1.0, 1.0);
@@ -205,26 +174,22 @@ public:
         {
             tf2::Vector3 direction = cross.normalized();
 
-            // How much distance do we need to brake to a stop from current speed?
-            double current_speed = current_vel_normal_.length();
-            double braking_distance = (current_speed * current_speed) / (2.0 * cfg_.max_decel);
+            // Follow setpoint: desired velocity to close error in one step
+            double desired_speed = angle_to_target / dt;
 
-            if (braking_distance >= angle_to_target)
-                // Need to brake: target a velocity of zero at the setpoint
-                desired_vel = direction * std::sqrt(2.0 * cfg_.max_decel * angle_to_target);
-            else
-                // Still accelerating: go as fast as needed to reach setpoint
-                desired_vel = direction * (angle_to_target / dt);
+            // Clamp to maximum speed we can still brake from
+            double max_stoppable_speed = std::sqrt(2.0 * cfg_.max_decel * angle_to_target);
+            if (desired_speed > max_stoppable_speed)
+                desired_speed = max_stoppable_speed;
 
-            desired_vel += setpoint_vel_normal_;
+            desired_vel = direction * desired_speed;
         }
 
         // Clamp acceleration and deceleration separately
         tf2::Vector3 dv = desired_vel - current_vel_normal_;
         double dv_mag = dv.length();
-        // Are we accelerating or decelerating? Check if dv is opposing current velocity.
-        bool decelerating = (current_vel_normal_.length() > 1e-9) &&
-                            (current_vel_normal_.dot(dv) < 0.0);
+        bool decelerating = current_vel_normal_.length() > 1e-9 &&
+                            current_vel_normal_.dot(dv) < 0.0;
         double max_dv = (decelerating ? cfg_.max_decel : cfg_.max_accel) * dt;
         if (dv_mag > max_dv)
             dv *= (max_dv / dv_mag);
@@ -240,14 +205,13 @@ public:
 
         // Remove the spin component parallel to the normal — it has no effect on
         // the normal direction but would re-emerge as unwanted velocity if tilt increases.
-        current_vel_normal_ -= current_normal_ * current_normal_.dot(current_vel_normal_);
+        //current_vel_normal_ -= current_normal_ * current_normal_.dot(current_vel_normal_);
 
         // ── Yaw ───────────────────────────────────────────────────────────────
         double yaw_error = setpoint_yaw_ - current_yaw_;
-        double yaw_speed = std::abs(current_yaw_vel_);
 
         // Follow setpoint velocity
-        double desired_yaw_vel = yaw_error / dt + setpoint_yaw_vel_;
+        double desired_yaw_vel = yaw_error / dt;
 
         // Clamp to the maximum speed we can still brake from given remaining distance
         double max_stoppable_speed = std::sqrt(2.0 * cfg_.max_decel_yaw * std::abs(yaw_error));
@@ -292,9 +256,7 @@ private:
     tf2::Vector3 current_vel_normal_ = {0.0, 0.0, 0.0};
 
     double setpoint_yaw_ = 0.0;
-    double setpoint_yaw_vel_ = 0.0;
     tf2::Vector3 setpoint_normal_ = {0.0, 0.0, 1.0};
-    tf2::Vector3 setpoint_vel_normal_ = {0.0, 0.0, 0.0};
 
     bool setpoint_initialized_ = false;
     rclcpp::Time last_setpoint_time_;
@@ -313,27 +275,31 @@ public:
                                Rope(BACK_NEUTRAL, -M_PI / 2, "back"),
                            })
     {
-        try
-        {
-            serial_.open("/dev/ttyACM1");
-            serial_.set_option(boost::asio::serial_port_base::baud_rate(115200));
-            serial_connected_ = true;
-        }
-        catch (const std::exception &e)
-        {
-            serial_connected_ = false;
-            RCLCPP_WARN(this->get_logger(), "Arduino not connected — logging only");
-        }
+        serial_.open("/dev/ttyACM0");
+        serial_.set_option(boost::asio::serial_port_base::baud_rate(115200));
+        serial_connected_ = true;
+        // try
+        // {
+        //     serial_.open("/dev/ttyACM0");
+        //     serial_.set_option(boost::asio::serial_port_base::baud_rate(115200));
+        //     serial_connected_ = true;
+        // }
+        // catch (const std::exception &e)
+        // {
+        //     serial_connected_ = false;
+        //     RCLCPP_WARN(this->get_logger(), "Arduino not connected — logging only");
+        // }
 
         // Subscriber just updates the setpoint.
         subscription_ = this->create_subscription<geometry_msgs::msg::QuaternionStamped>(
             "orientation", 10,
             [this](const geometry_msgs::msg::QuaternionStamped::SharedPtr msg)
             {
-                auto [tilt, pan, yaw] = quaternionToTiltPanYaw(msg);
                 RCLCPP_INFO(this->get_logger(), "Quaternion data (xyzw): (%.4f, %.4f, %.4f, %.4f)",
                             msg->quaternion.x, msg->quaternion.y, msg->quaternion.z, msg->quaternion.w);
-                controller_.setSetpoint({tilt, pan, yaw}, msg->header.stamp);
+
+                auto [v_norm, yaw] = quaternionToNormalYaw(msg);
+                controller_.setSetpoint(v_norm, yaw);
             });
 
         // Timer drives the control loop and sends motor angles.
@@ -409,6 +375,35 @@ private:
             yaw = -yaw;
 
         return {tilt, pan, yaw};
+    }
+
+    std::tuple<tf2::Vector3, double> quaternionToNormalYaw(const geometry_msgs::msg::QuaternionStamped::SharedPtr q_msg)
+    {
+        tf2::Quaternion q;
+        tf2::fromMsg(q_msg->quaternion, q);
+
+        // get normal vector by applying rotation to vector pointing up (0, 0, 1)
+        tf2::Vector3 v_norm = quatRotate(q, tf2::Vector3(0, 0, 1));
+
+        // get forward vector by applying rotation to the vector pointing forward (1, 0, 0)
+        tf2::Vector3 v_forward = quatRotate(q, tf2::Vector3(1, 0, 0));
+
+        // get quaternion of only the tilt and pan rotation, having 0 yaw rotation
+        tf2::Vector3 up(0, 0, 1);
+        tf2::Quaternion tilt_pan_rot = tf2::shortestArcQuatNormalize2(up, v_norm);
+
+        // rotating vector (1, 0, 0) results in the vector with 0 yaw
+        tf2::Vector3 expected_forward = quatRotate(tilt_pan_rot, tf2::Vector3(1, 0, 0));
+
+        // calculate angle between expected forward and actual forward vector.
+        double yaw = std::acos(std::clamp(v_forward.dot(expected_forward), -1.0, 1.0));
+
+        // determine the sign of the yaw angle by checking the direction of the cross product
+        tf2::Vector3 cross = expected_forward.cross(v_forward);
+        if (cross.dot(v_norm) < 0)
+            yaw = -yaw;
+
+        return {v_norm, yaw};
     }
 
     rclcpp::Subscription<geometry_msgs::msg::QuaternionStamped>::SharedPtr subscription_;
