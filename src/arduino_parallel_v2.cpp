@@ -26,26 +26,28 @@ static constexpr int BACK_NEUTRAL = 100 + TIGHTNESS;
 
 static constexpr int YAW_NEUTRAL = 90;
 
-
 // ── Tightness keyframes ───────────────────────────────────────────────────────
 // Each entry is {tilt_degrees, tightness_at_x_neg15, tightness_at_x_pos25}
 // Must be sorted by tilt ascending.
-struct TightnessKeyframe { double tilt_deg, neg15, pos25; };
+struct TightnessKeyframe
+{
+    double tilt_deg, neg15, pos25;
+};
 static const std::vector<TightnessKeyframe> TIGHTNESS_KEYFRAMES = {
-    {  0.0,  0.0,  0.0 },
-    { 10.0,  10.0,  0.0 },
-    { 15.0,  10.0, 10.0 },
-    { 45.0, 10.0, 70.0 },
-    { 90.0,  10.0, 150.0 },
+    {0.0, 0.0, 0.0},
+    {10.0, 10.0, 0.0},
+    {15.0, 10.0, 10.0},
+    {45.0, 10.0, 70.0},
+    {90.0, 10.0, 150.0},
 };
 
 std::pair<double, double> interpolateKeyframes(double tilt_rad)
 {
     double tilt_deg = tilt_rad * 180.0 / M_PI;
     if (tilt_deg <= TIGHTNESS_KEYFRAMES.front().tilt_deg)
-        return { TIGHTNESS_KEYFRAMES.front().neg15, TIGHTNESS_KEYFRAMES.front().pos25 };
+        return {TIGHTNESS_KEYFRAMES.front().neg15, TIGHTNESS_KEYFRAMES.front().pos25};
     if (tilt_deg >= TIGHTNESS_KEYFRAMES.back().tilt_deg)
-        return { TIGHTNESS_KEYFRAMES.back().neg15, TIGHTNESS_KEYFRAMES.back().pos25 };
+        return {TIGHTNESS_KEYFRAMES.back().neg15, TIGHTNESS_KEYFRAMES.back().pos25};
 
     for (size_t i = 0; i + 1 < TIGHTNESS_KEYFRAMES.size(); ++i)
     {
@@ -54,11 +56,11 @@ std::pair<double, double> interpolateKeyframes(double tilt_rad)
         if (tilt_deg >= k0.tilt_deg && tilt_deg <= k1.tilt_deg)
         {
             double t = (tilt_deg - k0.tilt_deg) / (k1.tilt_deg - k0.tilt_deg);
-            return { k0.neg15 + t * (k1.neg15 - k0.neg15),
-                     k0.pos25 + t * (k1.pos25 - k0.pos25) };
+            return {k0.neg15 + t * (k1.neg15 - k0.neg15),
+                    k0.pos25 + t * (k1.pos25 - k0.pos25)};
         }
     }
-    return { 0.0, 0.0 };
+    return {0.0, 0.0};
 }
 
 double tightnessAtX(double x, double tightness_neg15, double tightness_pos25)
@@ -67,6 +69,7 @@ double tightnessAtX(double x, double tightness_neg15, double tightness_pos25)
     return tightness_neg15 + t * (tightness_pos25 - tightness_neg15);
 }
 
+// ── Rope ──────────────────────────────────────────────────────────────────────
 class Rope
 {
 public:
@@ -126,25 +129,193 @@ private:
     std::string name_;
 };
 
-void printVector3(const tf2::Vector3 v, const rclcpp::Logger &logger)
+// ── RobotController ───────────────────────────────────────────────────────────
+struct ControllerConfig
 {
-    RCLCPP_INFO(logger, "(%f, %f, %f)", v.x(), v.y(), v.z());
-}
+    double update_rate_hz = 240.0;
+    double max_accel = 10.0; // rad/s², can be higher — following head motion
+    double max_decel = 2.0;  // rad/s², lower — prevents overshoot snapping ropes
+    double max_accel_yaw = 100.0;
+    double max_decel_yaw = 10.0;
+};
 
+struct Pose
+{
+    double tilt;
+    double pan;
+    double yaw;
+};
+
+class RobotController
+{
+public:
+    explicit RobotController(const ControllerConfig &cfg) : cfg_(cfg) {}
+
+    void setSetpoint(const Pose &pos, const rclcpp::Time &stamp)
+    {
+        if (!setpoint_initialized_)
+        {
+            setpoint_initialized_ = true;
+            last_setpoint_time_ = stamp;
+            setpoint_yaw_ = pos.yaw;
+            setpoint_normal_ = tiltPanToNormal(pos.tilt, pos.pan);
+            return;
+        }
+
+        double dt_setpoint = (stamp - last_setpoint_time_).seconds();
+        if (dt_setpoint > 0.001) // guard against duplicate timestamps
+        {
+            setpoint_yaw_vel_ = (pos.yaw - setpoint_yaw_) / dt_setpoint;
+            setpoint_yaw_ = pos.yaw;
+
+            tf2::Vector3 new_normal = tiltPanToNormal(pos.tilt, pos.pan);
+
+            // Estimate setpoint velocity from how fast the setpoint itself is moving
+            tf2::Vector3 sp_cross = setpoint_normal_.cross(new_normal);
+            if (sp_cross.length() > 1e-9)
+            {
+                double sp_angle = std::atan2(sp_cross.length(), std::clamp(setpoint_normal_.dot(new_normal), -1.0, 1.0));
+                setpoint_vel_normal_ = sp_cross.normalized() * (sp_angle * cfg_.update_rate_hz);
+            }
+            else
+            {
+                setpoint_vel_normal_ = {0.0, 0.0, 0.0};
+            }
+
+            setpoint_vel_normal_ = {0.0, 0.0, 0.0};
+            setpoint_normal_ = new_normal;
+        }
+
+        last_setpoint_time_ = stamp;
+    }
+
+    Pose update()
+    {
+        const double dt = 1.0 / cfg_.update_rate_hz;
+
+        // ── Normal vector (tilt/pan) ──────────────────────────────────────────
+
+        tf2::Vector3 cross = current_normal_.cross(setpoint_normal_);
+        double sin_angle = cross.length();
+        double cos_angle = std::clamp(current_normal_.dot(setpoint_normal_), -1.0, 1.0);
+        double angle_to_target = std::atan2(sin_angle, cos_angle);
+
+        tf2::Vector3 desired_vel{0.0, 0.0, 0.0};
+        if (sin_angle > 1e-9)
+        {
+            tf2::Vector3 direction = cross.normalized();
+
+            // How much distance do we need to brake to a stop from current speed?
+            double current_speed = current_vel_normal_.length();
+            double braking_distance = (current_speed * current_speed) / (2.0 * cfg_.max_decel);
+
+            if (braking_distance >= angle_to_target)
+                // Need to brake: target a velocity of zero at the setpoint
+                desired_vel = direction * std::sqrt(2.0 * cfg_.max_decel * angle_to_target);
+            else
+                // Still accelerating: go as fast as needed to reach setpoint
+                desired_vel = direction * (angle_to_target / dt);
+
+            desired_vel += setpoint_vel_normal_;
+        }
+
+        // Clamp acceleration and deceleration separately
+        tf2::Vector3 dv = desired_vel - current_vel_normal_;
+        double dv_mag = dv.length();
+        // Are we accelerating or decelerating? Check if dv is opposing current velocity.
+        bool decelerating = (current_vel_normal_.length() > 1e-9) &&
+                            (current_vel_normal_.dot(dv) < 0.0);
+        double max_dv = (decelerating ? cfg_.max_decel : cfg_.max_accel) * dt;
+        if (dv_mag > max_dv)
+            dv *= (max_dv / dv_mag);
+        current_vel_normal_ += dv;
+
+        // Integrate
+        double step_angle = current_vel_normal_.length() * dt;
+        if (step_angle > 1e-9)
+        {
+            tf2::Quaternion q(current_vel_normal_.normalized(), step_angle);
+            current_normal_ = quatRotate(q, current_normal_).normalized();
+        }
+
+        // Remove the spin component parallel to the normal — it has no effect on
+        // the normal direction but would re-emerge as unwanted velocity if tilt increases.
+        current_vel_normal_ -= current_normal_ * current_normal_.dot(current_vel_normal_);
+
+        // ── Yaw ───────────────────────────────────────────────────────────────
+        double yaw_error = setpoint_yaw_ - current_yaw_;
+        double yaw_speed = std::abs(current_yaw_vel_);
+
+        // Follow setpoint velocity
+        double desired_yaw_vel = yaw_error / dt + setpoint_yaw_vel_;
+
+        // Clamp to the maximum speed we can still brake from given remaining distance
+        double max_stoppable_speed = std::sqrt(2.0 * cfg_.max_decel_yaw * std::abs(yaw_error));
+        if (std::abs(desired_yaw_vel) > max_stoppable_speed)
+            desired_yaw_vel = std::copysign(max_stoppable_speed, yaw_error);
+
+        bool yaw_decelerating = (desired_yaw_vel - current_yaw_vel_) * current_yaw_vel_ < 0.0;
+        double max_dyv = (yaw_decelerating ? cfg_.max_decel_yaw : cfg_.max_accel_yaw) * dt;
+        double dyv = std::clamp(desired_yaw_vel - current_yaw_vel_, -max_dyv, max_dyv);
+        current_yaw_vel_ += dyv;
+        current_yaw_ += current_yaw_vel_ * dt;
+
+        return getCurrentPose();
+    }
+
+    Pose getCurrentPose() const
+    {
+        auto [tilt, pan] = normalToTiltPan(current_normal_);
+        return Pose{tilt, pan, current_yaw_};
+    }
+
+private:
+    static tf2::Vector3 tiltPanToNormal(double tilt, double pan)
+    {
+        return tf2::Vector3(
+            -std::sin(tilt) * std::sin(pan - M_PI),
+            std::sin(tilt) * std::cos(pan - M_PI),
+            std::cos(tilt));
+    }
+
+    std::pair<double, double> normalToTiltPan(const tf2::Vector3 &normal) const
+    {
+        double tilt = std::acos(std::clamp(normal.z(), -1.0, 1.0));
+        double pan = std::atan2(-normal.x(), normal.y()) + M_PI;
+        return {tilt, pan};
+    }
+
+    ControllerConfig cfg_;
+    double current_yaw_ = 0.0;
+    double current_yaw_vel_ = 0.0;
+    tf2::Vector3 current_normal_ = {0.0, 0.0, 1.0};
+    tf2::Vector3 current_vel_normal_ = {0.0, 0.0, 0.0};
+
+    double setpoint_yaw_ = 0.0;
+    double setpoint_yaw_vel_ = 0.0;
+    tf2::Vector3 setpoint_normal_ = {0.0, 0.0, 1.0};
+    tf2::Vector3 setpoint_vel_normal_ = {0.0, 0.0, 0.0};
+
+    bool setpoint_initialized_ = false;
+    rclcpp::Time last_setpoint_time_;
+};
+
+// ── ROS Node ──────────────────────────────────────────────────────────────────
 class ArduinoParallel_v2 : public rclcpp::Node
 {
 public:
     ArduinoParallel_v2() : Node("arduino_parallel_v2"), io_(), serial_(io_),
+                           controller_(ControllerConfig{}),
                            ropes_({
-                            Rope(LEFT_NEUTRAL, 0, "left"),
-                            Rope(RIGHT_NEUTRAL, M_PI, "right"),
-                            Rope(FRONT_NEUTRAL, M_PI / 2, "front"),
-                            Rope(BACK_NEUTRAL, -M_PI / 2, "back"),
-                        })
+                               Rope(LEFT_NEUTRAL, 0, "left"),
+                               Rope(RIGHT_NEUTRAL, M_PI, "right"),
+                               Rope(FRONT_NEUTRAL, M_PI / 2, "front"),
+                               Rope(BACK_NEUTRAL, -M_PI / 2, "back"),
+                           })
     {
         try
         {
-            serial_.open("/dev/ttyACM0");
+            serial_.open("/dev/ttyACM1");
             serial_.set_option(boost::asio::serial_port_base::baud_rate(115200));
             serial_connected_ = true;
         }
@@ -154,29 +325,38 @@ public:
             RCLCPP_WARN(this->get_logger(), "Arduino not connected — logging only");
         }
 
+        // Subscriber just updates the setpoint.
         subscription_ = this->create_subscription<geometry_msgs::msg::QuaternionStamped>(
             "orientation", 10,
             [this](const geometry_msgs::msg::QuaternionStamped::SharedPtr msg)
             {
                 auto [tilt, pan, yaw] = quaternionToTiltPanYaw(msg);
-                RCLCPP_INFO(this->get_logger(), "tilt: %.4f  pan: %.4f, yaw: %.4f", tilt, pan, yaw);
-                RCLCPP_INFO(this->get_logger(), "Quaternion data (xyzw): (%.4f, %.4f, %.4f, %.4f)", msg->quaternion.x, msg->quaternion.y, msg->quaternion.z, msg->quaternion.w);
-
-                auto [tightness_neg15, tightness_pos25] = interpolateKeyframes(tilt);
-                
-                for (auto &rope : ropes_)
-                    rope.update(tilt, pan, tightness_neg15, tightness_pos25);
-
-                sendMotorAngles(yaw, ropes_);
+                RCLCPP_INFO(this->get_logger(), "Quaternion data (xyzw): (%.4f, %.4f, %.4f, %.4f)",
+                            msg->quaternion.x, msg->quaternion.y, msg->quaternion.z, msg->quaternion.w);
+                controller_.setSetpoint({tilt, pan, yaw}, msg->header.stamp);
             });
+
+        // Timer drives the control loop and sends motor angles.
+        const auto period = std::chrono::duration<double>(1.0 / 240.0);
+        timer_ = this->create_wall_timer(period, [this]()
+                                         { controlLoop(); });
     }
 
 private:
-    rclcpp::Subscription<geometry_msgs::msg::QuaternionStamped>::SharedPtr subscription_;
-    boost::asio::io_service io_;
-    boost::asio::serial_port serial_;
-    std::vector<Rope> ropes_;
-    bool serial_connected_ = false;
+    void controlLoop()
+    {
+        Pose pose = controller_.update();
+
+        RCLCPP_INFO(this->get_logger(), "tilt: %.4f  pan: %.4f  yaw: %.4f",
+                    pose.tilt, pose.pan, pose.yaw);
+
+        auto [tightness_neg15, tightness_pos25] = interpolateKeyframes(pose.tilt);
+
+        for (auto &rope : ropes_)
+            rope.update(pose.tilt, pose.pan, tightness_neg15, tightness_pos25);
+
+        sendMotorAngles(pose.yaw, ropes_);
+    }
 
     void sendMotorAngles(double yaw, const std::vector<Rope> &ropes)
     {
@@ -230,6 +410,14 @@ private:
 
         return {tilt, pan, yaw};
     }
+
+    rclcpp::Subscription<geometry_msgs::msg::QuaternionStamped>::SharedPtr subscription_;
+    rclcpp::TimerBase::SharedPtr timer_;
+    boost::asio::io_service io_;
+    boost::asio::serial_port serial_;
+    RobotController controller_;
+    std::vector<Rope> ropes_;
+    bool serial_connected_ = false;
 };
 
 int main(int argc, char *argv[])
