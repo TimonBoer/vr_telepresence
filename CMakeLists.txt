@@ -48,6 +48,17 @@ target_link_libraries(arduino_parallel PUBLIC
     tf2_geometry_msgs::tf2_geometry_msgs
     ${Boost_LIBRARIES})
 
+# ── arduino_parallel_v2 ────────────────────────────────────────────────────────
+# Zet QuaternionStamped om naar lengtes van touwen en stuurt motor commands naar de Arduino
+add_executable(arduino_parallel_v2 src/arduino_parallel_v2.cpp)
+target_link_libraries(arduino_parallel_v2 PUBLIC
+    rclcpp::rclcpp
+    ${geometry_msgs_TARGETS}
+    tf2::tf2
+    tf2_ros::tf2_ros
+    tf2_geometry_msgs::tf2_geometry_msgs
+    ${Boost_LIBRARIES})
+
 # ── emotion_input_node ────────────────────────────────────────────────────────
 # Toetsenbordinput → publiceert emotie string naar Raspberry Pi
 add_executable(emotion_input_node src/emotion_input_node.cpp)
@@ -74,6 +85,7 @@ install(TARGETS
     quest_bridge_node
     arduino_serial
     arduino_parallel
+    arduino_parallel_v2
     emotion_input_node
     video_latency_collector_node
     latency_collector_node
