@@ -26,6 +26,47 @@ static constexpr int BACK_NEUTRAL = 100 + TIGHTNESS;
 
 static constexpr int YAW_NEUTRAL = 90;
 
+
+// ── Tightness keyframes ───────────────────────────────────────────────────────
+// Each entry is {tilt_degrees, tightness_at_x_neg15, tightness_at_x_pos25}
+// Must be sorted by tilt ascending.
+struct TightnessKeyframe { double tilt_deg, neg15, pos25; };
+static const std::vector<TightnessKeyframe> TIGHTNESS_KEYFRAMES = {
+    {  0.0,  0.0,  0.0 },
+    { 10.0,  10.0,  0.0 },
+    { 15.0,  10.0, 10.0 },
+    { 45.0, 10.0, 70.0 },
+    { 90.0,  10.0, 150.0 },
+};
+
+std::pair<double, double> interpolateKeyframes(double tilt_rad)
+{
+    double tilt_deg = tilt_rad * 180.0 / M_PI;
+    if (tilt_deg <= TIGHTNESS_KEYFRAMES.front().tilt_deg)
+        return { TIGHTNESS_KEYFRAMES.front().neg15, TIGHTNESS_KEYFRAMES.front().pos25 };
+    if (tilt_deg >= TIGHTNESS_KEYFRAMES.back().tilt_deg)
+        return { TIGHTNESS_KEYFRAMES.back().neg15, TIGHTNESS_KEYFRAMES.back().pos25 };
+
+    for (size_t i = 0; i + 1 < TIGHTNESS_KEYFRAMES.size(); ++i)
+    {
+        const auto &k0 = TIGHTNESS_KEYFRAMES[i];
+        const auto &k1 = TIGHTNESS_KEYFRAMES[i + 1];
+        if (tilt_deg >= k0.tilt_deg && tilt_deg <= k1.tilt_deg)
+        {
+            double t = (tilt_deg - k0.tilt_deg) / (k1.tilt_deg - k0.tilt_deg);
+            return { k0.neg15 + t * (k1.neg15 - k0.neg15),
+                     k0.pos25 + t * (k1.pos25 - k0.pos25) };
+        }
+    }
+    return { 0.0, 0.0 };
+}
+
+double tightnessAtX(double x, double tightness_neg15, double tightness_pos25)
+{
+    double t = std::clamp((x - (-15.0)) / (25.0 - (-15.0)), 0.0, 1.0);
+    return tightness_neg15 + t * (tightness_pos25 - tightness_neg15);
+}
+
 class Rope
 {
 public:
@@ -34,27 +75,27 @@ public:
           angle_from_curve_centre_(0.0), dist_from_curve_centre_(0.0),
           rope_length_(0.0), angle_offset_(0.0), motor_angle_(motor_neutral_angle), name_(name)
     {
-        update(0.0, 0.0);
+        update(0.0, 0.0, 0.0, 0.0);
     }
 
-    void update(double tilt_angle, double pan_angle)
+    void update(double tilt_angle, double pan_angle, double tightness_neg15, double tightness_pos25)
     {
         updateRopeGeometry(pan_angle);
+        motor_neutral_angle_adjusted_ = motor_neutral_angle_ + tightnessAtX(x_, tightness_neg15, tightness_pos25);
         updateRopeLength(tilt_angle);
         updateMotorAngle();
     }
 
     double getMotorAngle() const { return motor_angle_; }
-
     std::string getName() const { return name_; }
 
 private:
     void updateRopeGeometry(double pan_angle)
     {
-        double x = ROPE_OFFSET * std::cos(pan_angle + angular_pos_) + CENTER_RADIUS;
+        x_ = ROPE_OFFSET * std::cos(pan_angle + angular_pos_) + CENTER_RADIUS;
         double y = VERTEBRA_RADIUS - VERTEBRA_HEIGHT;
-        dist_from_curve_centre_ = std::sqrt(x * x + y * y);
-        angle_from_curve_centre_ = -std::atan2(x, y);
+        dist_from_curve_centre_ = std::sqrt(x_ * x_ + y * y);
+        angle_from_curve_centre_ = -std::atan2(x_, y);
     }
 
     void updateRopeLength(double tilt_angle)
@@ -70,16 +111,18 @@ private:
         constexpr double RAD_TO_DEG = 180.0 / M_PI;
         double length_delta = NEUTRAL_ROPE_LENGTH - rope_length_;
         angle_offset_ = (length_delta / SPINDLE_RADIUS) * RAD_TO_DEG;
-        motor_angle_ = static_cast<int>(motor_neutral_angle_ + angle_offset_);
+        motor_angle_ = static_cast<int>(motor_neutral_angle_adjusted_ + angle_offset_);
     }
 
     double angular_pos_;
     int motor_neutral_angle_;
+    double motor_neutral_angle_adjusted_;
     double angle_from_curve_centre_;
     double dist_from_curve_centre_;
     double rope_length_;
     double angle_offset_;
     double motor_angle_;
+    double x_;
     std::string name_;
 };
 
@@ -119,16 +162,16 @@ public:
                 RCLCPP_INFO(this->get_logger(), "tilt: %.4f  pan: %.4f, yaw: %.4f", tilt, pan, yaw);
                 RCLCPP_INFO(this->get_logger(), "Quaternion data (xyzw): (%.4f, %.4f, %.4f, %.4f)", msg->quaternion.x, msg->quaternion.y, msg->quaternion.z, msg->quaternion.w);
 
+                auto [tightness_neg15, tightness_pos25] = interpolateKeyframes(tilt);
+                
                 for (auto &rope : ropes_)
-                    rope.update(tilt, pan);
+                    rope.update(tilt, pan, tightness_neg15, tightness_pos25);
 
                 sendMotorAngles(yaw, ropes_);
             });
     }
 
 private:
-    static constexpr int ECHO_PORT = 5006; // moet matchen met HMD_ECHO_PORT in de Quest-app
-
     rclcpp::Subscription<geometry_msgs::msg::QuaternionStamped>::SharedPtr subscription_;
     boost::asio::io_service io_;
     boost::asio::serial_port serial_;
