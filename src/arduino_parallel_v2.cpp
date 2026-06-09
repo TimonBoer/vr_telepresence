@@ -348,6 +348,7 @@ public:
                 // de meting de keten-/netwerklatency weergeeft en niet de rekentijd.
                 echo_seq(msg->header.frame_id);
 
+                msg->header.stamp = this->now();
                 quest_pub_->publish(*msg); // echo the received orientation for logging/debugging
 
                 RCLCPP_INFO(this->get_logger(), "Quaternion data (xyzw): (%.4f, %.4f, %.4f, %.4f)",
