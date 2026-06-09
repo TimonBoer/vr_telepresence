@@ -50,7 +50,7 @@ static const std::vector<TightnessKeyframe> TIGHTNESS_KEYFRAMES = {
     {0.0, 0.0, 0.0},
     {10.0, 10.0, 0.0},
     {20.0, 0.0, 10.0},
-    {90.0, -40.0, 150.0},
+    {90.0, 0.0, 150.0},
 };
 
 std::pair<double, double> interpolateKeyframes(double tilt_rad)
@@ -329,13 +329,6 @@ public:
             RCLCPP_WARN(this->get_logger(),
                         "QUEST_IP niet gezet — latency-echo uit (export QUEST_IP=<ip bril>)");
         }
-
-        // ── QoS: keep-last-1 best-effort ─────────────────────────────────────
-        // MOET matchen met de publisher in de bridge. Een reliable subscriber
-        // op een best-effort publisher is INCOMPATIBEL (dan komt er niets door).
-        // Keep-last-1 is bovendien de queue-fix: alleen de NIEUWSTE pose telt.
-        rclcpp::QoS qos(rclcpp::KeepLast(1));
-        qos.best_effort();
 
         quest_pub_ = this->create_publisher<geometry_msgs::msg::QuaternionStamped>("quest/orientation", 10);
 
