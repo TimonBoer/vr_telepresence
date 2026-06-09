@@ -89,9 +89,9 @@ public:
         RCLCPP_INFO(this->get_logger(),
                     "TCP server luistert op poort 5005 — wachten op Quest verbinding...");
 
-        // Poll elke 10 ms voor nieuwe TCP data
+        // Poll elke 10 ms voor nieuwe TCP data, heb deze verlaagt naar 1 om latency te verminderen.
         timer_ = this->create_wall_timer(
-            std::chrono::milliseconds(10),
+            std::chrono::milliseconds(1), 
             std::bind(&QuestBridgeNode::receive_tcp, this));
     }
 
