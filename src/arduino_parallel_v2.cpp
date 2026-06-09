@@ -32,10 +32,10 @@ constexpr double SPINDLE_RADIUS = 20.0;
 constexpr double NEUTRAL_ROPE_LENGTH = VERTEBRA_HEIGHT * 2.0 * N_VERTEBRAE;
 
 static constexpr int TIGHTNESS = 30;
-static constexpr int LEFT_NEUTRAL = 85 + TIGHTNESS;
+static constexpr int LEFT_NEUTRAL = 90 + TIGHTNESS;
 static constexpr int RIGHT_NEUTRAL = 90 + TIGHTNESS;
-static constexpr int FRONT_NEUTRAL = 85 + TIGHTNESS;
-static constexpr int BACK_NEUTRAL = 100 + TIGHTNESS;
+static constexpr int FRONT_NEUTRAL = 90 + TIGHTNESS;
+static constexpr int BACK_NEUTRAL = 95 + TIGHTNESS;
 
 static constexpr int YAW_NEUTRAL = 90;
 
@@ -49,9 +49,8 @@ struct TightnessKeyframe
 static const std::vector<TightnessKeyframe> TIGHTNESS_KEYFRAMES = {
     {0.0, 0.0, 0.0},
     {10.0, 10.0, 0.0},
-    {15.0, 10.0, 10.0},
-    {45.0, 10.0, 70.0},
-    {90.0, 10.0, 150.0},
+    {20.0, 0.0, 10.0},
+    {90.0, -40.0, 150.0},
 };
 
 std::pair<double, double> interpolateKeyframes(double tilt_rad)
@@ -149,7 +148,7 @@ struct ControllerConfig
     double max_accel = 15.0; // rad/s², can be higher — following head motion
     double max_decel = 2.0;  // rad/s², lower — prevents overshoot snapping ropes
     double max_accel_yaw = 10000.0;
-    double max_decel_yaw = 10000.0;
+    double max_decel_yaw = 10.0;
 };
 
 struct Pose
@@ -338,6 +337,8 @@ public:
         rclcpp::QoS qos(rclcpp::KeepLast(1));
         qos.best_effort();
 
+        quest_pub_ = this->create_publisher<geometry_msgs::msg::QuaternionStamped>("quest/orientation", 10);
+
         // Subscriber just updates the setpoint.
         subscription_ = this->create_subscription<geometry_msgs::msg::QuaternionStamped>(
             "orientation", 10,
@@ -346,6 +347,8 @@ public:
                 // Echo het seq DIRECT terug, vóór alle servo-berekeningen, zodat
                 // de meting de keten-/netwerklatency weergeeft en niet de rekentijd.
                 echo_seq(msg->header.frame_id);
+
+                quest_pub_->publish(*msg); // echo the received orientation for logging/debugging
 
                 RCLCPP_INFO(this->get_logger(), "Quaternion data (xyzw): (%.4f, %.4f, %.4f, %.4f)",
                             msg->quaternion.x, msg->quaternion.y, msg->quaternion.z, msg->quaternion.w);
@@ -522,6 +525,7 @@ private:
         return {v_norm, yaw};
     }
 
+    rclcpp::Publisher<geometry_msgs::msg::QuaternionStamped>::SharedPtr quest_pub_;
     rclcpp::Subscription<geometry_msgs::msg::QuaternionStamped>::SharedPtr subscription_;
     rclcpp::TimerBase::SharedPtr timer_;
     boost::asio::io_service io_;

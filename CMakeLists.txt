@@ -59,6 +59,16 @@ target_link_libraries(arduino_parallel_v2 PUBLIC
     tf2_geometry_msgs::tf2_geometry_msgs
     ${Boost_LIBRARIES})
 
+# ── imu_to_tilt_pan_yaw ────────────────────────────────────────────────────────
+# Zet QuaternionStamped van de IMU om naar tilt, pan en yaw (voor logging/debug
+add_executable(imu_to_tilt_pan_yaw src/imu_to_tilt_pan_yaw.cpp)
+target_link_libraries(imu_to_tilt_pan_yaw PUBLIC
+    rclcpp::rclcpp
+    ${geometry_msgs_TARGETS}
+    tf2::tf2
+    tf2_ros::tf2_ros
+    tf2_geometry_msgs::tf2_geometry_msgs)
+
 # ── emotion_input_node ────────────────────────────────────────────────────────
 # Toetsenbordinput → publiceert emotie string naar Raspberry Pi
 add_executable(emotion_input_node src/emotion_input_node.cpp)
@@ -86,10 +96,16 @@ install(TARGETS
     arduino_serial
     arduino_parallel
     arduino_parallel_v2
+    imu_to_tilt_pan_yaw
     emotion_input_node
     video_latency_collector_node
     latency_collector_node
   DESTINATION lib/${PROJECT_NAME})
+
+# Python scripts installed separately
+install(PROGRAMS
+    src/imu_talker.py
+    DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY launch
   DESTINATION share/${PROJECT_NAME})
