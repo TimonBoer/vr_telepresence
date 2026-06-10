@@ -339,7 +339,6 @@ public:
             {
                 // Echo het seq DIRECT terug, vóór alle servo-berekeningen, zodat
                 // de meting de keten-/netwerklatency weergeeft en niet de rekentijd.
-                echo_seq(msg->header.frame_id);
 
                 msg->header.stamp = this->now();
                 quest_pub_->publish(*msg); // echo the received orientation for logging/debugging
@@ -350,7 +349,8 @@ public:
                 auto [v_norm, yaw] = quaternionToNormalYaw(msg);
                 setpoint_queue_.push_back({std::chrono::steady_clock::now(),
                                            v_norm,
-                                           yaw});
+                                           yaw,
+                                           msg->header.frame_id}); // ← add this
             });
 
         // Timer drives the control loop and sends motor angles.
@@ -420,6 +420,7 @@ private:
                (now - setpoint_queue_.front().received_at) >= delay)
         {
             auto &sp = setpoint_queue_.front();
+            echo_seq(sp.frame_id); // ← add this
             controller_.setSetpoint(sp.normal, sp.yaw);
             setpoint_queue_.pop_front();
         }
@@ -533,6 +534,7 @@ private:
         std::chrono::steady_clock::time_point received_at;
         tf2::Vector3 normal;
         double yaw;
+        std::string frame_id; // ← add this
     };
 
     double latency_ms_ = 0.0;
