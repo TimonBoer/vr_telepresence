@@ -31,13 +31,13 @@ constexpr int N_VERTEBRAE = 6;
 constexpr double SPINDLE_RADIUS = 20.0;
 constexpr double NEUTRAL_ROPE_LENGTH = VERTEBRA_HEIGHT * 2.0 * N_VERTEBRAE;
 
-static constexpr int TIGHTNESS = 30;
-static constexpr int LEFT_NEUTRAL = 90 + TIGHTNESS;
-static constexpr int RIGHT_NEUTRAL = 90 + TIGHTNESS;
-static constexpr int FRONT_NEUTRAL = 90 + TIGHTNESS;
-static constexpr int BACK_NEUTRAL = 95 + TIGHTNESS;
+static constexpr int TIGHTNESS = 20;
+static constexpr int LEFT_NEUTRAL = 100 + TIGHTNESS;
+static constexpr int RIGHT_NEUTRAL = 100 + TIGHTNESS;
+static constexpr int FRONT_NEUTRAL = 95 + TIGHTNESS;
+static constexpr int BACK_NEUTRAL = 100 + TIGHTNESS;
 
-static constexpr int YAW_NEUTRAL = 90;
+static constexpr int YAW_NEUTRAL = 60;
 
 // ── Tightness keyframes ───────────────────────────────────────────────────────
 // Each entry is {tilt_degrees, tightness_at_x_neg15, tightness_at_x_pos25}
@@ -47,10 +47,10 @@ struct TightnessKeyframe
     double tilt_deg, neg15, pos25;
 };
 static const std::vector<TightnessKeyframe> TIGHTNESS_KEYFRAMES = {
-    {0.0, 0.0, 0.0},
-    {10.0, 10.0, 0.0},
-    {20.0, 0.0, 10.0},
-    {90.0, 0.0, 150.0},
+    {0.0, -10.0, -10.0},
+    {10.0, -10.0, -10.0},
+    {20.0, -10.0, 10.0},
+    {90.0, -20.0, 150.0},
 };
 
 std::pair<double, double> interpolateKeyframes(double tilt_rad)
